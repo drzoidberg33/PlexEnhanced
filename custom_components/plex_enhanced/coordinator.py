@@ -313,10 +313,22 @@ def _build_user_from_session(raw) -> PlexUser:
 
 def _build_player_from_session(raw) -> PlexPlayer:
     player = raw.players[0] if raw.players else None
+    # Prefer the <Session location="..."> element when present — it reflects
+    # the stream's actual network route, not just the player's network
+    # position. They usually agree but diverge for Plex Relay etc.
+    location = _session_location(raw)
     if player is None:
         return PlexPlayer(
-            machine_identifier="unknown", title="Unknown", product="Unknown"
+            machine_identifier="unknown",
+            title="Unknown",
+            product="Unknown",
+            local=location != "wan",
         )
+    is_local = (
+        location == "lan"
+        if location
+        else bool(getattr(player, "local", True))
+    )
     return PlexPlayer(
         machine_identifier=player.machineIdentifier or "",
         title=player.title or "Unknown",
@@ -324,9 +336,16 @@ def _build_player_from_session(raw) -> PlexPlayer:
         platform=player.platform,
         device=player.device,
         address=player.address,
-        local=bool(getattr(player, "local", True)),
+        local=is_local,
         state=player.state or "stopped",
     )
+
+
+def _session_location(raw) -> str | None:
+    session = getattr(raw, "session", None)
+    if session is None:
+        return None
+    return getattr(session, "location", None)
 
 
 def _build_content_from_session(raw, server: PlexServer) -> PlexContent:
@@ -380,6 +399,19 @@ def _build_transcode_from_session(raw) -> PlexTranscode | None:
 
 
 def _session_bitrate(raw) -> int:
+    """Live streaming bandwidth (kbps) for the session.
+
+    Plex exposes the *measured* network bandwidth on the ``<Session>`` element
+    (``raw.session.bandwidth``); this fluctuates with real network use, which
+    is what bandwidth sensors should reflect. Falls back to transcode target
+    or source media bitrate only if the live value is unavailable — those
+    values are static and would freeze the sensors.
+    """
+    session = getattr(raw, "session", None)
+    if session is not None:
+        bandwidth = getattr(session, "bandwidth", None)
+        if bandwidth:
+            return int(bandwidth)
     transcodes = getattr(raw, "transcodeSessions", None) or []
     if transcodes and getattr(transcodes[0], "bitrate", None):
         return int(transcodes[0].bitrate)
