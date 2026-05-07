@@ -1,0 +1,101 @@
+scan_library:
+  name: Scan library
+  description: Trigger a deep scan on a Plex library section.
+  fields:
+    server:
+      name: Server
+      description: The Plex Media Server hosting the library.
+      required: true
+      selector:
+        device:
+          integration: plex_enhanced
+    library:
+      name: Library
+      description: Library section ID (e.g. 1) or library title (e.g. "Movies").
+      required: true
+      example: Movies
+      selector:
+        text:
+
+refresh_library:
+  name: Refresh library metadata
+  description: Refresh metadata for every item in a Plex library section without re-scanning files.
+  fields:
+    server:
+      name: Server
+      description: The Plex Media Server hosting the library.
+      required: true
+      selector:
+        device:
+          integration: plex_enhanced
+    library:
+      name: Library
+      description: Library section ID or library title.
+      required: true
+      example: Movies
+      selector:
+        text:
+
+mark_watched:
+  name: Mark item watched
+  description: Mark a Plex item as watched (applies to the account owner's watched state).
+  fields:
+    server:
+      name: Server
+      description: The Plex Media Server hosting the item.
+      required: true
+      selector:
+        device:
+          integration: plex_enhanced
+    rating_key:
+      name: Rating key
+      description: The Plex ratingKey of the item to mark.
+      required: true
+      example: "12345"
+      selector:
+        text:
+
+mark_unwatched:
+  name: Mark item unwatched
+  description: Reset a Plex item's watched state (applies to the account owner).
+  fields:
+    server:
+      name: Server
+      description: The Plex Media Server hosting the item.
+      required: true
+      selector:
+        device:
+          integration: plex_enhanced
+    rating_key:
+      name: Rating key
+      description: The Plex ratingKey of the item to mark.
+      required: true
+      example: "12345"
+      selector:
+        text:
+
+terminate_session:
+  name: Terminate playback session
+  description: Stop an active Plex session and show a reason message to the viewer.
+  fields:
+    server:
+      name: Server
+      description: The Plex Media Server hosting the session.
+      required: true
+      selector:
+        device:
+          integration: plex_enhanced
+    session_key:
+      name: Session key
+      description: The session key from sensor.<server>_active_sessions attributes.
+      required: true
+      example: "1"
+      selector:
+        text:
+    reason:
+      name: Reason
+      description: Optional message shown to the user when their session is killed.
+      required: false
+      example: "Bedtime!"
+      selector:
+        text:

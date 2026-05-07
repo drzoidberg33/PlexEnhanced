@@ -1,0 +1,142 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Plex Enhanced",
+        "description": "Sign in with your Plex account to continue. A browser tab should open automatically — if it doesn't, [click here]({url})."
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Plex Enhanced",
+        "description": "The token for **{username}** is no longer valid. Submit to start a new plex.tv sign-in."
+      },
+      "servers": {
+        "title": "Choose servers",
+        "description": "Select which Plex Media Server(s) Home Assistant should monitor. All owned servers are selected by default.",
+        "data": {
+          "servers": "Servers"
+        }
+      }
+    },
+    "progress": {
+      "wait_for_pin": "Waiting for plex.tv to confirm sign-in. If the auth tab didn't open, [click here]({url})."
+    },
+    "abort": {
+      "already_configured": "This Plex account is already configured.",
+      "no_servers": "No owned Plex Media Servers were found on this account.",
+      "auth_timeout": "Plex authentication timed out. Please try again.",
+      "invalid_auth": "Plex authentication failed.",
+      "cannot_connect": "Unable to reach plex.tv.",
+      "reauth_successful": "Re-authentication completed."
+    },
+    "error": {
+      "cannot_connect": "Unable to reach plex.tv.",
+      "invalid_auth": "Plex authentication failed."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      }
+    },
+    "sensor": {
+      "active_sessions": {
+        "name": "Active sessions"
+      },
+      "transcode_sessions": {
+        "name": "Transcode sessions"
+      },
+      "bandwidth_total": {
+        "name": "Total bandwidth"
+      },
+      "bandwidth_lan": {
+        "name": "LAN bandwidth"
+      },
+      "bandwidth_wan": {
+        "name": "WAN bandwidth"
+      },
+      "version": {
+        "name": "Version"
+      },
+      "now_playing": {
+        "name": "Now playing"
+      }
+    }
+  },
+  "services": {
+    "scan_library": {
+      "name": "Scan library",
+      "description": "Trigger a deep scan on a Plex library section.",
+      "fields": {
+        "server": {
+          "name": "Server",
+          "description": "The Plex Media Server hosting the library."
+        },
+        "library": {
+          "name": "Library",
+          "description": "Library section ID or library title."
+        }
+      }
+    },
+    "refresh_library": {
+      "name": "Refresh library metadata",
+      "description": "Refresh metadata for every item in a library without re-scanning files.",
+      "fields": {
+        "server": {
+          "name": "Server",
+          "description": "The Plex Media Server hosting the library."
+        },
+        "library": {
+          "name": "Library",
+          "description": "Library section ID or library title."
+        }
+      }
+    },
+    "mark_watched": {
+      "name": "Mark item watched",
+      "description": "Mark a Plex item as watched (applies to the account owner).",
+      "fields": {
+        "server": {
+          "name": "Server",
+          "description": "The Plex Media Server hosting the item."
+        },
+        "rating_key": {
+          "name": "Rating key",
+          "description": "The Plex ratingKey of the item to mark."
+        }
+      }
+    },
+    "mark_unwatched": {
+      "name": "Mark item unwatched",
+      "description": "Reset a Plex item's watched state (applies to the account owner).",
+      "fields": {
+        "server": {
+          "name": "Server",
+          "description": "The Plex Media Server hosting the item."
+        },
+        "rating_key": {
+          "name": "Rating key",
+          "description": "The Plex ratingKey of the item to mark."
+        }
+      }
+    },
+    "terminate_session": {
+      "name": "Terminate playback session",
+      "description": "Stop an active Plex session and show a reason message to the viewer.",
+      "fields": {
+        "server": {
+          "name": "Server",
+          "description": "The Plex Media Server hosting the session."
+        },
+        "session_key": {
+          "name": "Session key",
+          "description": "The session key from the active_sessions sensor attributes."
+        },
+        "reason": {
+          "name": "Reason",
+          "description": "Optional message shown to the user when their session is killed."
+        }
+      }
+    }
+  }
+}
