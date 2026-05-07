@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Plex Enhanced",
-        "description": "Sign in with your Plex account to continue. A browser tab should open automatically — if it doesn't, [click here]({url})."
+        "description": "Click the link below to sign in with your Plex account.\n\n[Sign in with Plex]({url})"
       },
       "reauth_confirm": {
         "title": "Re-authenticate Plex Enhanced",
@@ -18,7 +18,7 @@
       }
     },
     "progress": {
-      "wait_for_pin": "Waiting for plex.tv to confirm sign-in. If the auth tab didn't open, [click here]({url})."
+      "wait_for_pin": "Waiting for plex.tv to confirm sign-in.\n\n[Sign in with Plex]({url})"
     },
     "abort": {
       "already_configured": "This Plex account is already configured.",
