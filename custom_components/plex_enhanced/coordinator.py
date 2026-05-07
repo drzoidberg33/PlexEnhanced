@@ -43,6 +43,7 @@ _LOGGER = logging.getLogger(__name__)
 
 ACCOUNT_UPDATE_INTERVAL = timedelta(hours=1)
 LIBRARY_UPDATE_INTERVAL = timedelta(minutes=5)
+BANDWIDTH_WINDOW_SECONDS = 30
 
 
 @dataclass
@@ -195,8 +196,15 @@ class PlexServerCoordinator(DataUpdateCoordinator[PlexServerData]):
             clients_raw = []
         clients = tuple(_build_client(c) for c in clients_raw)
 
-        bandwidth_lan = sum(s.bitrate_kbps for s in sessions if s.player.local)
-        bandwidth_wan = sum(s.bitrate_kbps for s in sessions if not s.player.local)
+        # Bandwidth from /statistics/bandwidth (real measured throughput),
+        # falling back to summing per-session bitrates if statistics are
+        # unavailable (server hasn't enabled them, ancient PMS, etc.).
+        bandwidth = _fetch_server_bandwidth(self.server)
+        if bandwidth is None:
+            bandwidth_lan = sum(s.bitrate_kbps for s in sessions if s.player.local)
+            bandwidth_wan = sum(s.bitrate_kbps for s in sessions if not s.player.local)
+        else:
+            bandwidth_lan, bandwidth_wan = bandwidth
         transcode_count = sum(1 for s in sessions if s.transcode is not None)
 
         return PlexServerData(
@@ -428,6 +436,36 @@ def _resolve_image_url(path: str | None, server: PlexServer) -> str | None:
         return server.url(path, includeToken=True)
     except Exception:  # noqa: BLE001 - plexapi raises various types here
         return None
+
+
+def _fetch_server_bandwidth(server: PlexServer) -> tuple[int, int] | None:
+    """Live LAN/WAN throughput (kbps) from ``/statistics/bandwidth``.
+
+    Sums ``bytes`` across the per-second buckets in the last
+    :data:`BANDWIDTH_WINDOW_SECONDS` and divides by the window length to get
+    average kbps over the interval. Returns ``None`` when the statistics
+    endpoint is unavailable so the caller can fall back to per-session bitrate.
+    """
+    try:
+        cutoff = dt_util.utcnow() - timedelta(seconds=BANDWIDTH_WINDOW_SECONDS)
+        points = server.bandwidth(timespan="seconds", at__gte=cutoff)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Server bandwidth statistics unavailable: %s", err)
+        return None
+
+    lan_bytes = 0
+    wan_bytes = 0
+    for point in points or ():
+        size = int(getattr(point, "bytes", 0) or 0)
+        if getattr(point, "lan", False):
+            lan_bytes += size
+        else:
+            wan_bytes += size
+
+    window = float(BANDWIDTH_WINDOW_SECONDS)
+    lan_kbps = int(lan_bytes * 8 / window / 1000)
+    wan_kbps = int(wan_bytes * 8 / window / 1000)
+    return (lan_kbps, wan_kbps)
 
 
 def _build_client(raw) -> PlexClientInfo:
