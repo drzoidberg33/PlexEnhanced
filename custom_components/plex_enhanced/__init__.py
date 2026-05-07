@@ -133,6 +133,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             emitter.stop()
         for listener in runtime.alert_listeners.values():
             await listener.async_stop()
+        # Cancel scheduled refresh callbacks on every coordinator so a reload
+        # doesn't leave stale timers polling the PMS.
+        coordinators = [
+            runtime.account_coordinator,
+            *runtime.server_coordinators.values(),
+            *runtime.library_coordinators.values(),
+            *runtime.bandwidth_coordinators.values(),
+        ]
+        for coordinator in coordinators:
+            await coordinator.async_shutdown()
 
     return unload_ok
 
