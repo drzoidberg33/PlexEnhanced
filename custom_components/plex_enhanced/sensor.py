@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import (
     PlexAccountCoordinator,
+    PlexBandwidthCoordinator,
     PlexEnhancedRuntime,
     PlexLibraryCoordinator,
     PlexServerCoordinator,
@@ -45,16 +46,22 @@ async def async_setup_entry(
     # 1. Server- and library-scoped sensors are static — known at setup time.
     static_entities: list[SensorEntity] = []
     for machine_id, server_coord in runtime.server_coordinators.items():
+        bandwidth_coord = runtime.bandwidth_coordinators.get(machine_id)
         static_entities.extend(
             [
                 PlexServerActiveSessionsSensor(server_coord),
                 PlexServerTranscodeSessionsSensor(server_coord),
-                PlexServerBandwidthSensor(server_coord, "total"),
-                PlexServerBandwidthSensor(server_coord, "lan"),
-                PlexServerBandwidthSensor(server_coord, "wan"),
                 PlexServerVersionSensor(server_coord),
             ]
         )
+        if bandwidth_coord is not None:
+            static_entities.extend(
+                [
+                    PlexServerBandwidthSensor(bandwidth_coord, "total"),
+                    PlexServerBandwidthSensor(bandwidth_coord, "lan"),
+                    PlexServerBandwidthSensor(bandwidth_coord, "wan"),
+                ]
+            )
         library_coord = runtime.library_coordinators.get(machine_id)
         if library_coord and library_coord.data:
             static_entities.extend(
@@ -148,24 +155,46 @@ class PlexServerTranscodeSessionsSensor(PlexServerEntity, SensorEntity):
         return self.coordinator.data.transcode_session_count
 
 
-class PlexServerBandwidthSensor(PlexServerEntity, SensorEntity):
+class PlexServerBandwidthSensor(
+    CoordinatorEntity[PlexBandwidthCoordinator], SensorEntity
+):
+    """Live throughput from the dedicated bandwidth coordinator (5 s cadence)."""
+
+    _attr_has_entity_name = True
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfDataRate.KILOBITS_PER_SECOND
     _attr_device_class = SensorDeviceClass.DATA_RATE
 
-    def __init__(self, coordinator: PlexServerCoordinator, scope: str) -> None:
-        super().__init__(coordinator, f"bandwidth_{scope}")
+    def __init__(
+        self, coordinator: PlexBandwidthCoordinator, scope: str
+    ) -> None:
+        super().__init__(coordinator)
         self._scope = scope
         self._attr_translation_key = f"bandwidth_{scope}"
+        self._attr_unique_id = (
+            f"{coordinator.machine_identifier}_bandwidth_{scope}"
+        )
 
     @property
-    def native_value(self) -> int:
+    def device_info(self) -> DeviceInfo:
+        # Reference the same physical "Plex Media Server" device the rest of
+        # the server entities are attached to so they group together.
+        return DeviceInfo(
+            identifiers={
+                (DOMAIN, self.coordinator.machine_identifier)
+            },
+        )
+
+    @property
+    def native_value(self) -> int | None:
         data = self.coordinator.data
+        if data is None:
+            return None
         if self._scope == "total":
-            return data.bandwidth_total_kbps
+            return data.total_kbps
         if self._scope == "lan":
-            return data.bandwidth_lan_kbps
-        return data.bandwidth_wan_kbps
+            return data.lan_kbps
+        return data.wan_kbps
 
 
 class PlexServerVersionSensor(PlexServerEntity, SensorEntity):

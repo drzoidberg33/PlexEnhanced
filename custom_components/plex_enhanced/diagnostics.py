@@ -67,6 +67,8 @@ async def async_get_config_entry_diagnostics(
         data = server_coord.data
         listener = runtime.alert_listeners.get(machine_id)
         library_coord = runtime.library_coordinators.get(machine_id)
+        bandwidth_coord = runtime.bandwidth_coordinators.get(machine_id)
+        bandwidth = bandwidth_coord.data if bandwidth_coord else None
         payload["servers"].append(
             {
                 "machine_identifier": machine_id,
@@ -78,10 +80,20 @@ async def async_get_config_entry_diagnostics(
                     data.transcode_session_count if data else 0
                 ),
                 "bandwidth_kbps": {
-                    "total": data.bandwidth_total_kbps if data else 0,
-                    "lan": data.bandwidth_lan_kbps if data else 0,
-                    "wan": data.bandwidth_wan_kbps if data else 0,
+                    "total": bandwidth.total_kbps if bandwidth else 0,
+                    "lan": bandwidth.lan_kbps if bandwidth else 0,
+                    "wan": bandwidth.wan_kbps if bandwidth else 0,
                 },
+                "bandwidth_last_poll_at": (
+                    bandwidth.fetched_at.isoformat()
+                    if bandwidth and bandwidth.fetched_at
+                    else None
+                ),
+                "bandwidth_last_poll_success": (
+                    bandwidth_coord.last_update_success
+                    if bandwidth_coord
+                    else None
+                ),
                 "client_count": len(data.clients) if data else 0,
                 "library_count": (
                     len(library_coord.data or {}) if library_coord else 0

@@ -114,7 +114,12 @@ class PlexClientInfo:
 
 @dataclass(frozen=True)
 class PlexServerData:
-    """One snapshot of a single Plex Media Server's runtime state."""
+    """One snapshot of a single Plex Media Server's runtime state.
+
+    Bandwidth is *not* part of this snapshot — it's owned by
+    :class:`PlexBandwidthCoordinator` which polls on a faster cadence so
+    bandwidth sensors update independently of session/client polling.
+    """
 
     machine_identifier: str
     name: str
@@ -123,8 +128,15 @@ class PlexServerData:
     online: bool
     sessions: tuple[PlexSession, ...]
     clients: tuple[PlexClientInfo, ...]
-    bandwidth_total_kbps: int
-    bandwidth_lan_kbps: int
-    bandwidth_wan_kbps: int
     transcode_session_count: int
+    fetched_at: datetime
+
+
+@dataclass(frozen=True)
+class PlexBandwidth:
+    """Live throughput snapshot from ``/statistics/bandwidth``."""
+
+    lan_kbps: int
+    wan_kbps: int
+    total_kbps: int
     fetched_at: datetime

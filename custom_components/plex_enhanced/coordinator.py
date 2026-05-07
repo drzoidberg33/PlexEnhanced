@@ -29,6 +29,7 @@ from plexapi.server import PlexServer
 
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 from .models import (
+    PlexBandwidth,
     PlexClientInfo,
     PlexContent,
     PlexLibrary,
@@ -43,7 +44,10 @@ _LOGGER = logging.getLogger(__name__)
 
 ACCOUNT_UPDATE_INTERVAL = timedelta(hours=1)
 LIBRARY_UPDATE_INTERVAL = timedelta(minutes=5)
-BANDWIDTH_WINDOW_SECONDS = 30
+BANDWIDTH_UPDATE_INTERVAL = timedelta(seconds=5)
+# Window we average measured throughput over. Should be a small multiple of the
+# update interval so consecutive polls don't double-count buckets.
+BANDWIDTH_WINDOW_SECONDS = 10
 
 
 @dataclass
@@ -54,6 +58,9 @@ class PlexEnhancedRuntime:
     account_coordinator: "PlexAccountCoordinator"
     server_coordinators: dict[str, "PlexServerCoordinator"] = field(default_factory=dict)
     library_coordinators: dict[str, "PlexLibraryCoordinator"] = field(default_factory=dict)
+    bandwidth_coordinators: dict[str, "PlexBandwidthCoordinator"] = field(
+        default_factory=dict
+    )
     # Populated in __init__.async_setup_entry (avoids importing alert_listener here).
     alert_listeners: dict[str, Any] = field(default_factory=dict)
     session_emitters: dict[str, Any] = field(default_factory=dict)
@@ -196,15 +203,6 @@ class PlexServerCoordinator(DataUpdateCoordinator[PlexServerData]):
             clients_raw = []
         clients = tuple(_build_client(c) for c in clients_raw)
 
-        # Bandwidth from /statistics/bandwidth (real measured throughput),
-        # falling back to summing per-session bitrates if statistics are
-        # unavailable (server hasn't enabled them, ancient PMS, etc.).
-        bandwidth = _fetch_server_bandwidth(self.server)
-        if bandwidth is None:
-            bandwidth_lan = sum(s.bitrate_kbps for s in sessions if s.player.local)
-            bandwidth_wan = sum(s.bitrate_kbps for s in sessions if not s.player.local)
-        else:
-            bandwidth_lan, bandwidth_wan = bandwidth
         transcode_count = sum(1 for s in sessions if s.transcode is not None)
 
         return PlexServerData(
@@ -215,9 +213,6 @@ class PlexServerCoordinator(DataUpdateCoordinator[PlexServerData]):
             online=True,
             sessions=tuple(sessions),
             clients=clients,
-            bandwidth_total_kbps=bandwidth_lan + bandwidth_wan,
-            bandwidth_lan_kbps=bandwidth_lan,
-            bandwidth_wan_kbps=bandwidth_wan,
             transcode_session_count=transcode_count,
             fetched_at=now,
         )
@@ -277,6 +272,101 @@ class PlexLibraryCoordinator(DataUpdateCoordinator[dict[str, PlexLibrary]]):
                 item_count=count,
             )
         return result
+
+
+class PlexBandwidthCoordinator(DataUpdateCoordinator[PlexBandwidth]):
+    """Polls Plex's ``/statistics/bandwidth`` endpoint at a fast cadence.
+
+    Bandwidth is the dashboard-style measured throughput value, averaged over
+    a small sliding window. Lives on its own coordinator so it can refresh
+    every ~5 s without dragging in the heavier session/client work.
+
+    The endpoint is queried with ``timespan='seconds'`` and ``at__gte=cutoff``;
+    we additionally filter the returned buckets client-side as a defence
+    against PMS versions that ignore the ``at__gte`` query parameter and
+    return all stored buckets (which would otherwise blow up the average).
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        server_coordinator: "PlexServerCoordinator",
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}[{server_coordinator.display_name}_bandwidth]",
+            update_interval=BANDWIDTH_UPDATE_INTERVAL,
+        )
+        self._server_coordinator = server_coordinator
+
+    @property
+    def server(self) -> PlexServer:
+        return self._server_coordinator.server
+
+    @property
+    def machine_identifier(self) -> str:
+        return self._server_coordinator.machine_identifier
+
+    @property
+    def display_name(self) -> str:
+        return self._server_coordinator.display_name
+
+    async def _async_update_data(self) -> PlexBandwidth:
+        try:
+            return await self.hass.async_add_executor_job(self._fetch_blocking)
+        except Unauthorized as err:
+            raise ConfigEntryAuthFailed("Plex token rejected") from err
+        except Exception as err:
+            raise UpdateFailed(
+                f"Bandwidth refresh for {self.display_name} failed: {err}"
+            ) from err
+
+    def _fetch_blocking(self) -> PlexBandwidth:
+        # plexapi parses the 'at' attribute via datetime.fromtimestamp(int) →
+        # naive local datetime. Cutoff must match the same shape so the
+        # comparison below works without TypeError.
+        now_naive = datetime.now()
+        cutoff = now_naive - timedelta(seconds=BANDWIDTH_WINDOW_SECONDS)
+
+        try:
+            points = self.server.bandwidth(timespan="seconds", at__gte=cutoff)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug(
+                "/statistics/bandwidth unavailable on %s: %s",
+                self.display_name,
+                err,
+            )
+            return PlexBandwidth(0, 0, 0, dt_util.utcnow())
+
+        # Defensive client-side filter — see class docstring.
+        recent = [
+            p
+            for p in (points or [])
+            if getattr(p, "at", None) is not None and p.at >= cutoff
+        ]
+
+        if not recent:
+            return PlexBandwidth(0, 0, 0, dt_util.utcnow())
+
+        lan_bytes = 0
+        wan_bytes = 0
+        for point in recent:
+            size = int(getattr(point, "bytes", 0) or 0)
+            if getattr(point, "lan", False):
+                lan_bytes += size
+            else:
+                wan_bytes += size
+
+        window = float(BANDWIDTH_WINDOW_SECONDS)
+        lan_kbps = int(lan_bytes * 8 / window / 1000)
+        wan_kbps = int(wan_bytes * 8 / window / 1000)
+        return PlexBandwidth(
+            lan_kbps=lan_kbps,
+            wan_kbps=wan_kbps,
+            total_kbps=lan_kbps + wan_kbps,
+            fetched_at=dt_util.utcnow(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -436,36 +526,6 @@ def _resolve_image_url(path: str | None, server: PlexServer) -> str | None:
         return server.url(path, includeToken=True)
     except Exception:  # noqa: BLE001 - plexapi raises various types here
         return None
-
-
-def _fetch_server_bandwidth(server: PlexServer) -> tuple[int, int] | None:
-    """Live LAN/WAN throughput (kbps) from ``/statistics/bandwidth``.
-
-    Sums ``bytes`` across the per-second buckets in the last
-    :data:`BANDWIDTH_WINDOW_SECONDS` and divides by the window length to get
-    average kbps over the interval. Returns ``None`` when the statistics
-    endpoint is unavailable so the caller can fall back to per-session bitrate.
-    """
-    try:
-        cutoff = dt_util.utcnow() - timedelta(seconds=BANDWIDTH_WINDOW_SECONDS)
-        points = server.bandwidth(timespan="seconds", at__gte=cutoff)
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("Server bandwidth statistics unavailable: %s", err)
-        return None
-
-    lan_bytes = 0
-    wan_bytes = 0
-    for point in points or ():
-        size = int(getattr(point, "bytes", 0) or 0)
-        if getattr(point, "lan", False):
-            lan_bytes += size
-        else:
-            wan_bytes += size
-
-    window = float(BANDWIDTH_WINDOW_SECONDS)
-    lan_kbps = int(lan_bytes * 8 / window / 1000)
-    wan_kbps = int(wan_bytes * 8 / window / 1000)
-    return (lan_kbps, wan_kbps)
 
 
 def _build_client(raw) -> PlexClientInfo:

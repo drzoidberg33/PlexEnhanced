@@ -14,6 +14,7 @@ from .alert_listener import PlexAlertListener, SessionEventEmitter
 from .const import CONF_CLIENT_IDENTIFIER, CONF_SERVERS, DOMAIN, PLATFORMS
 from .coordinator import (
     PlexAccountCoordinator,
+    PlexBandwidthCoordinator,
     PlexEnhancedRuntime,
     PlexLibraryCoordinator,
     PlexServerCoordinator,
@@ -59,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     server_coordinators: dict[str, PlexServerCoordinator] = {}
     library_coordinators: dict[str, PlexLibraryCoordinator] = {}
+    bandwidth_coordinators: dict[str, PlexBandwidthCoordinator] = {}
     session_emitters: dict[str, SessionEventEmitter] = {}
     alert_listeners: dict[str, PlexAlertListener] = {}
     for resource in selected_resources:
@@ -80,6 +82,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await server_coord.async_config_entry_first_refresh()
         library_coord = PlexLibraryCoordinator(hass, server_coord)
         await library_coord.async_config_entry_first_refresh()
+        bandwidth_coord = PlexBandwidthCoordinator(hass, server_coord)
+        await bandwidth_coord.async_config_entry_first_refresh()
 
         # Emitter must be created *after* first refresh so it primes against
         # the current session list rather than firing 'started' for everything
@@ -90,6 +94,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         server_coordinators[resource.clientIdentifier] = server_coord
         library_coordinators[resource.clientIdentifier] = library_coord
+        bandwidth_coordinators[resource.clientIdentifier] = bandwidth_coord
         session_emitters[resource.clientIdentifier] = session_emitter
         alert_listeners[resource.clientIdentifier] = alert_listener
 
@@ -101,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         account_coordinator=account_coordinator,
         server_coordinators=server_coordinators,
         library_coordinators=library_coordinators,
+        bandwidth_coordinators=bandwidth_coordinators,
         alert_listeners=alert_listeners,
         session_emitters=session_emitters,
     )
