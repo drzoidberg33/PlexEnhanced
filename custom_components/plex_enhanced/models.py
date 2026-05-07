@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -140,3 +141,50 @@ class PlexBandwidth:
     wan_kbps: int
     total_kbps: int
     fetched_at: datetime
+
+
+def session_to_payload(session: PlexSession) -> dict[str, Any]:
+    """Flatten a :class:`PlexSession` into a JSON-friendly dict.
+
+    Shared between bus event payloads and entity attributes so dashboards
+    and automations only ever have to learn one shape.
+    """
+    content = session.content
+    return {
+        "server": session.server_machine_identifier,
+        "session_key": session.session_key,
+        "user": {
+            "user_id": session.user.user_id,
+            "username": session.user.username,
+            "title": session.user.title,
+        },
+        "player": {
+            "machine_identifier": session.player.machine_identifier,
+            "title": session.player.title,
+            "product": session.player.product,
+            "platform": session.player.platform,
+            "device": session.player.device,
+            "local": session.player.local,
+            "state": session.player.state,
+        },
+        "content": {
+            "type": content.type,
+            "title": content.title,
+            "show": content.show_title,
+            "season": content.season_number,
+            "episode": content.episode_number,
+            "artist": content.artist,
+            "album": content.album,
+            "library": content.library,
+            "year": content.year,
+            "guid": content.guid,
+            "duration_ms": content.duration_ms,
+            "view_offset_ms": content.view_offset_ms,
+            "thumb_url": content.thumb_url,
+        },
+        "transcoding": session.transcode is not None,
+        "bitrate_kbps": session.bitrate_kbps,
+        "started_at": (
+            session.started_at.isoformat() if session.started_at else None
+        ),
+    }

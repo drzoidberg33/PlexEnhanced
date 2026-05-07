@@ -23,10 +23,17 @@ from .coordinator import (
     PlexLibraryCoordinator,
     PlexServerCoordinator,
 )
+from datetime import datetime, timezone
+
 from .entity import PlexLibraryEntity, PlexServerEntity
-from .models import PlexLibrary, PlexSession, PlexUser
+from .models import PlexLibrary, PlexSession, PlexUser, session_to_payload
 
 USER_STATE_IDLE = "Idle"
+
+# Sentinel used when a session somehow lacks a started_at — keeps such
+# entries last in the most-recently-started ordering without raising on
+# None vs datetime comparison.
+_OLDEST = datetime.min.replace(tzinfo=timezone.utc)
 
 _LIBRARY_ICONS = {
     "movie": "mdi:movie",
@@ -282,24 +289,17 @@ class PlexUserNowPlayingSensor(
     def _user(self) -> PlexUser | None:
         return (self.coordinator.data or {}).get(self._user_id)
 
-    def _current_session(self) -> PlexSession | None:
+    def _ordered_sessions(self) -> list[PlexSession]:
+        """All of this user's active sessions, most-recently-started first."""
+        sessions: list[PlexSession] = []
         for coord in self._server_coordinators.values():
             if not coord.last_update_success or coord.data is None:
                 continue
             for session in coord.data.sessions:
                 if session.user.user_id == self._user_id:
-                    return session
-        return None
-
-    def _session_count(self) -> int:
-        total = 0
-        for coord in self._server_coordinators.values():
-            if coord.data is None:
-                continue
-            total += sum(
-                1 for s in coord.data.sessions if s.user.user_id == self._user_id
-            )
-        return total
+                    sessions.append(session)
+        sessions.sort(key=lambda s: s.started_at or _OLDEST, reverse=True)
+        return sessions
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -325,31 +325,34 @@ class PlexUserNowPlayingSensor(
 
     @property
     def native_value(self) -> str:
-        session = self._current_session()
-        if session is None:
+        sessions = self._ordered_sessions()
+        if not sessions:
             return USER_STATE_IDLE
-        return _session_summary(session)
+        return _session_summary(sessions[0])
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         user = self._user
-        session = self._current_session()
+        sessions = self._ordered_sessions()
         base: dict[str, Any] = {
             "username": user.username if user else self._user_id,
             "user_id": self._user_id,
             "is_owner": bool(user and user.is_owner),
             "is_home_user": bool(user and user.is_home_user),
             "email": user.email if user else None,
-            "session_count": self._session_count(),
+            "session_count": len(sessions),
+            "state": _aggregate_state(sessions),
+            "sessions": [session_to_payload(s) for s in sessions],
         }
-        if session is None:
-            base["state"] = "idle"
+        if not sessions:
             return base
 
-        content = session.content
+        # Top-level fields mirror the primary (most-recently-started) session
+        # so existing templates keyed on attributes.title etc. keep working.
+        primary = sessions[0]
+        content = primary.content
         base.update(
             {
-                "state": session.player.state,
                 "type": content.type,
                 "title": content.title,
                 "show": content.show_title,
@@ -367,16 +370,16 @@ class PlexUserNowPlayingSensor(
                 "thumb_url": content.thumb_url,
                 "art_url": content.art_url,
                 "guid": content.guid,
-                "player": session.player.title,
-                "player_product": session.player.product,
-                "player_platform": session.player.platform,
-                "player_device": session.player.device,
-                "local": session.player.local,
-                "transcoding": session.transcode is not None,
-                "bitrate_kbps": session.bitrate_kbps,
-                "server": session.server_machine_identifier,
+                "player": primary.player.title,
+                "player_product": primary.player.product,
+                "player_platform": primary.player.platform,
+                "player_device": primary.player.device,
+                "local": primary.player.local,
+                "transcoding": primary.transcode is not None,
+                "bitrate_kbps": primary.bitrate_kbps,
+                "server": primary.server_machine_identifier,
                 "started_at": (
-                    session.started_at.isoformat() if session.started_at else None
+                    primary.started_at.isoformat() if primary.started_at else None
                 ),
             }
         )
@@ -388,3 +391,18 @@ def _progress_percent(content) -> float | None:
         return None
     pct = (content.view_offset_ms / content.duration_ms) * 100
     return round(pct, 1)
+
+
+def _aggregate_state(sessions: list[PlexSession]) -> str:
+    """Roll up multiple session states for the user-level ``state`` attribute.
+
+    Priority: any session playing → ``playing``; else any buffering →
+    ``buffering``; else any paused → ``paused``; else ``idle``.
+    """
+    if not sessions:
+        return "idle"
+    states = {s.player.state for s in sessions}
+    for candidate in ("playing", "buffering", "paused"):
+        if candidate in states:
+            return candidate
+    return "idle"

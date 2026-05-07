@@ -27,56 +27,13 @@ from .const import (
     EVENT_PLAYBACK_STOPPED,
 )
 from .coordinator import PlexServerCoordinator, _resolve_image_url
-from .models import PlexSession
+from .models import PlexSession, session_to_payload
 
 _LOGGER = logging.getLogger(__name__)
 
 # Plex timeline state codes — 5 == playback/import finished.
 _TIMELINE_STATE_FINISHED = 5
 _METADATA_STATE_CREATED = "created"
-
-
-def _session_payload(session: PlexSession) -> dict[str, Any]:
-    """Flatten a PlexSession into a JSON-friendly bus event payload."""
-    content = session.content
-    return {
-        "server": session.server_machine_identifier,
-        "session_key": session.session_key,
-        "user": {
-            "user_id": session.user.user_id,
-            "username": session.user.username,
-            "title": session.user.title,
-        },
-        "player": {
-            "machine_identifier": session.player.machine_identifier,
-            "title": session.player.title,
-            "product": session.player.product,
-            "platform": session.player.platform,
-            "device": session.player.device,
-            "local": session.player.local,
-            "state": session.player.state,
-        },
-        "content": {
-            "type": content.type,
-            "title": content.title,
-            "show": content.show_title,
-            "season": content.season_number,
-            "episode": content.episode_number,
-            "artist": content.artist,
-            "album": content.album,
-            "library": content.library,
-            "year": content.year,
-            "guid": content.guid,
-            "duration_ms": content.duration_ms,
-            "view_offset_ms": content.view_offset_ms,
-            "thumb_url": content.thumb_url,
-        },
-        "transcoding": session.transcode is not None,
-        "bitrate_kbps": session.bitrate_kbps,
-        "started_at": (
-            session.started_at.isoformat() if session.started_at else None
-        ),
-    }
 
 
 class SessionEventEmitter:
@@ -125,7 +82,7 @@ class SessionEventEmitter:
         self._previous = current
 
     def _fire(self, event_name: str, session: PlexSession) -> None:
-        self.hass.bus.async_fire(event_name, _session_payload(session))
+        self.hass.bus.async_fire(event_name, session_to_payload(session))
 
 
 class PlexAlertListener:
