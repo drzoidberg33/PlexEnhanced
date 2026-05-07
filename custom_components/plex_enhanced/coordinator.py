@@ -277,14 +277,11 @@ class PlexLibraryCoordinator(DataUpdateCoordinator[dict[str, PlexLibrary]]):
 class PlexBandwidthCoordinator(DataUpdateCoordinator[PlexBandwidth]):
     """Polls Plex's ``/statistics/bandwidth`` endpoint at a fast cadence.
 
-    Bandwidth is the dashboard-style measured throughput value, averaged over
-    a small sliding window. Lives on its own coordinator so it can refresh
-    every ~5 s without dragging in the heavier session/client work.
-
-    The endpoint is queried with ``timespan='seconds'`` and ``at__gte=cutoff``;
-    we additionally filter the returned buckets client-side as a defence
-    against PMS versions that ignore the ``at__gte`` query parameter and
-    return all stored buckets (which would otherwise blow up the average).
+    Same source the Plex dashboard's live bandwidth graph uses
+    (``timespan='seconds'``). Filtering to the rolling window happens
+    client-side; per-bucket bytes are summed and divided by the number of
+    distinct seconds covered so the result is real kbps regardless of how
+    many devices contributed buckets in any given second.
     """
 
     def __init__(
@@ -323,29 +320,22 @@ class PlexBandwidthCoordinator(DataUpdateCoordinator[PlexBandwidth]):
             ) from err
 
     def _fetch_blocking(self) -> PlexBandwidth:
-        # plexapi parses the 'at' attribute via datetime.fromtimestamp(int) →
-        # naive local datetime. Cutoff must match the same shape so the
-        # comparison below works without TypeError.
-        now_naive = datetime.now()
-        cutoff = now_naive - timedelta(seconds=BANDWIDTH_WINDOW_SECONDS)
-
         try:
-            points = self.server.bandwidth(timespan="seconds", at__gte=cutoff)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.debug(
-                "/statistics/bandwidth unavailable on %s: %s",
+            points = list(self.server.bandwidth(timespan="seconds") or [])
+        except Exception as err:
+            _LOGGER.warning(
+                "/statistics/bandwidth failed on %s: %s",
                 self.display_name,
                 err,
             )
             return PlexBandwidth(0, 0, 0, dt_util.utcnow())
 
-        # Defensive client-side filter — see class docstring.
+        cutoff = datetime.now() - timedelta(seconds=BANDWIDTH_WINDOW_SECONDS)
         recent = [
             p
-            for p in (points or [])
+            for p in points
             if getattr(p, "at", None) is not None and p.at >= cutoff
         ]
-
         if not recent:
             return PlexBandwidth(0, 0, 0, dt_util.utcnow())
 
@@ -358,9 +348,12 @@ class PlexBandwidthCoordinator(DataUpdateCoordinator[PlexBandwidth]):
             else:
                 wan_bytes += size
 
-        window = float(BANDWIDTH_WINDOW_SECONDS)
-        lan_kbps = int(lan_bytes * 8 / window / 1000)
-        wan_kbps = int(wan_bytes * 8 / window / 1000)
+        seconds = len({p.at for p in recent})
+        if seconds == 0:
+            return PlexBandwidth(0, 0, 0, dt_util.utcnow())
+
+        lan_kbps = int(lan_bytes * 8 / seconds / 1000)
+        wan_kbps = int(wan_bytes * 8 / seconds / 1000)
         return PlexBandwidth(
             lan_kbps=lan_kbps,
             wan_kbps=wan_kbps,
