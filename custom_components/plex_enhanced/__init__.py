@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
+from homeassistant.components import frontend
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN
 from homeassistant.core import HomeAssistant
@@ -22,6 +25,23 @@ from .coordinator import (
 from .services import async_register_services
 
 _LOGGER = logging.getLogger(__name__)
+
+CARD_FILE_NAME = "plex-enhanced-sessions-card.js"
+CARD_URL_PATH = f"/{DOMAIN}_static"
+_CARD_REGISTERED_KEY = f"{DOMAIN}_card_registered"
+
+
+async def _async_register_frontend_card(hass: HomeAssistant) -> None:
+    """Serve and auto-load the bundled Lovelace card. Idempotent across entries."""
+    if hass.data.get(_CARD_REGISTERED_KEY):
+        return
+    hass.data[_CARD_REGISTERED_KEY] = True
+
+    www_path = Path(__file__).parent / "www"
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL_PATH, str(www_path), cache_headers=False)]
+    )
+    frontend.add_extra_js_url(hass, f"{CARD_URL_PATH}/{CARD_FILE_NAME}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -115,6 +135,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     async_register_services(hass)
+    await _async_register_frontend_card(hass)
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
