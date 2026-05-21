@@ -204,23 +204,19 @@ class PlexEnhancedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
-    async def async_remove(self) -> None:
+    def async_remove(self) -> None:
         """Best-effort cleanup when the flow is dismissed mid-PIN.
 
         plexapi's ``MyPlexPinLogin`` runs a non-daemon polling thread that
         otherwise lingers until its timeout fires. Cancelling the awaiter and
-        signalling the login object lets the thread exit promptly.
+        signalling the login object lets the thread exit promptly. HA invokes
+        this hook synchronously, so we schedule ``stop()`` on the executor
+        without awaiting — the thread.join() inside it would otherwise block
+        the event loop.
         """
         if self._pin_task is not None and not self._pin_task.done():
             self._pin_task.cancel()
-            try:
-                await self._pin_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
         if self._pin_login is not None:
             stop = getattr(self._pin_login, "stop", None)
             if callable(stop):
-                try:
-                    await self.hass.async_add_executor_job(stop)
-                except Exception:  # noqa: BLE001
-                    pass
+                self.hass.async_add_executor_job(stop)
