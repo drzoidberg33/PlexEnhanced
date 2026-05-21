@@ -105,7 +105,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         library_coord = PlexLibraryCoordinator(hass, server_coord)
         await library_coord.async_config_entry_first_refresh()
         bandwidth_coord = PlexBandwidthCoordinator(hass, server_coord)
-        await bandwidth_coord.async_config_entry_first_refresh()
+        # Bandwidth is non-critical: ``/statistics/bandwidth`` can be slow or
+        # unavailable on some PMS instances, but the sensors gracefully report
+        # ``None`` until data arrives and the coordinator will retry on its
+        # normal 5 s cadence. ``async_refresh`` logs failures without raising,
+        # so a flaky bandwidth endpoint can't abort the whole entry setup.
+        await bandwidth_coord.async_refresh()
 
         # Emitter must be created *after* first refresh so it primes against
         # the current session list rather than firing 'started' for everything

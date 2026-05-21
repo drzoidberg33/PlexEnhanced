@@ -48,6 +48,12 @@ BANDWIDTH_UPDATE_INTERVAL = timedelta(seconds=5)
 # Window we average measured throughput over. Should be a small multiple of the
 # update interval so consecutive polls don't double-count buckets.
 BANDWIDTH_WINDOW_SECONDS = 10
+# Server-side cutoff for /statistics/bandwidth. Without an ``at>`` filter Plex
+# returns every per-second bucket it has on file, which on busy/long-running
+# servers is tens of thousands of rows — slow enough to blow past HA's setup
+# timeout. We ask for comfortably more than the post-filter window to absorb
+# any clock skew between PMS and HA.
+BANDWIDTH_LOOKBACK_SECONDS = 60
 
 
 @dataclass
@@ -320,8 +326,13 @@ class PlexBandwidthCoordinator(DataUpdateCoordinator[PlexBandwidth]):
             ) from err
 
     def _fetch_blocking(self) -> PlexBandwidth:
+        # ``at>`` is a plexapi filter name — pass via **kwargs because the
+        # operator suffix isn't a valid Python identifier.
+        since = datetime.now() - timedelta(seconds=BANDWIDTH_LOOKBACK_SECONDS)
         try:
-            points = list(self.server.bandwidth(timespan="seconds") or [])
+            points = list(
+                self.server.bandwidth(timespan="seconds", **{"at>": since}) or []
+            )
         except Exception as err:
             _LOGGER.warning(
                 "/statistics/bandwidth failed on %s: %s",
