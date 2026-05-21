@@ -171,6 +171,10 @@ class PlexServerBandwidthSensor(
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfDataRate.KILOBITS_PER_SECOND
     _attr_device_class = SensorDeviceClass.DATA_RATE
+    # Disabled by default: ``/statistics/bandwidth`` is heavy on some PMS
+    # instances. The coordinator only polls while at least one listener is
+    # attached, so leaving these off means zero traffic until a user opts in.
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self, coordinator: PlexBandwidthCoordinator, scope: str
