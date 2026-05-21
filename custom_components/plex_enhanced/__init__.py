@@ -85,7 +85,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     alert_listeners: dict[str, PlexAlertListener] = {}
     for resource in selected_resources:
         try:
-            plex_server = await hass.async_add_executor_job(resource.connect)
+            plex_server = await hass.async_add_executor_job(
+                lambda r=resource: r.connect(locations=["local", "remote"])
+            )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "Could not connect to Plex server %s: %s", resource.name, err
